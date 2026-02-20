@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Vesselka — MarineTraffic Capture",
+  "version": "1.0",
+  "description": "Capture vessel positions from MarineTraffic for Vesselka",
+  "content_scripts": [
+    {
+      "matches": ["*://www.marinetraffic.com/*"],
+      "js": ["injector.js"],
+      "css": ["panel.css"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["intercept.js"],
+      "matches": ["*://www.marinetraffic.com/*"]
+    }
+  ],
+  "permissions": []
+}
