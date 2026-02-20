@@ -362,12 +362,29 @@ function mergeVessels(): VesselData[] {
     curatedByName.set(curated.name.toUpperCase(), curated);
   }
 
+  // Also build lookup by IMO and mtShipId for precise matching
+  const curatedByImo = new Map<string, (typeof GUSTAVIA_YACHTS)[number]>();
+  const curatedByShipId = new Map<string, (typeof GUSTAVIA_YACHTS)[number]>();
+  for (const curated of GUSTAVIA_YACHTS) {
+    if (curated.imo) curatedByImo.set(curated.imo, curated);
+    if (curated.mtShipId) curatedByShipId.set(curated.mtShipId, curated);
+  }
+
   // Only show captured vessels — enrich with curated data if matched
   return captured.map((c) => {
-    const curated = curatedByName.get(c.name.toUpperCase());
+    // Match by IMO or mtShipId first (precise), then by name+length (fuzzy)
+    const curated =
+      (c.imo && curatedByImo.get(c.imo)) ||
+      (c.mtShipId && curatedByShipId.get(c.mtShipId)) ||
+      curatedByName.get(c.name.toUpperCase());
+    // If both have IMO and they differ, it's a different vessel with the same name
+    const imoConflict = c.imo && curated?.imo && c.imo !== curated.imo;
     const matched =
       curated &&
-      (c.length <= 0 ||
+      !imoConflict &&
+      ((c.imo && curated.imo === c.imo) ||
+        (c.mtShipId && curated.mtShipId === c.mtShipId) ||
+        c.length <= 0 ||
         curated.length <= 0 ||
         Math.min(c.length, curated.length) /
           Math.max(c.length, curated.length) >
