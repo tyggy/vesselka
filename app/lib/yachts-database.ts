@@ -401,8 +401,6 @@ function mergeVessels(): VesselData[] {
       heading: c.heading,
     } as VesselData;
   });
-
-  return result;
 }
 
 export const ALL_VESSELS = mergeVessels();

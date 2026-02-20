@@ -7,6 +7,14 @@ module.exports = {
         protocol: "https",
         hostname: "upload.wikimedia.org",
       },
+      {
+        protocol: "https",
+        hostname: "www.marinetraffic.com",
+      },
+      {
+        protocol: "https",
+        hostname: "photos.marinetraffic.com",
+      },
     ],
   },
 }
