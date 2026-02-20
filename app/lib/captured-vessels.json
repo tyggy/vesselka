@@ -176,8 +176,8 @@
     "mmsi": "319306800",
     "mtShipId": "9445729",
     "length": 100,
-    "builder": "Benetti",
-    "yearBuilt": 2016,
+    "builder": "Feadship",
+    "yearBuilt": 2025,
     "type": "motor",
     "photoUrl": "https://www.marinetraffic.com/getAssetDefaultPhoto/?photo_size=800&asset_id=9445729&asset_type_id=0",
     "owner": {
@@ -189,7 +189,8 @@
     "lon": -62.865055,
     "speed": 0.2,
     "heading": 116,
-    "flag": "CAYMAN ISLANDS"
+    "flag": "CAYMAN ISLANDS",
+    "notableInfo": "Feadship Project 1013, 101m, delivered 2025. Interior by Remi Tessier."
   },
   {
     "name": "WHISPER",
