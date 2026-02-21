@@ -40,7 +40,7 @@ function makeLeicaIcon(
   const rotation = (heading || 0) - 90;
 
   const html = `<div style="
-    position:relative;
+    position:absolute;
     white-space:nowrap;
     font-family:'SF Pro Display','Helvetica Neue',Helvetica,Arial,sans-serif;
     font-size:${fontSize}px;
@@ -49,21 +49,12 @@ function makeLeicaIcon(
     text-transform:uppercase;
     color:${color};
     text-shadow:0 0 8px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.9);
-    transform:rotate(${rotation}deg);
-    transform-origin:left center;
+    transform:translate(-50%,-50%) rotate(${rotation}deg);
     pointer-events:auto;
     cursor:pointer;
     line-height:1;
     padding:2px 0;
-  "><span style="
-    display:inline-block;
-    width:6px;height:6px;
-    border-radius:50%;
-    background:${statusColor};
-    margin-right:6px;
-    vertical-align:middle;
-    box-shadow:0 0 4px ${statusColor};
-  "></span>${name}</div>`;
+  ">${name}</div>`;
 
   return L.divIcon({
     html,
