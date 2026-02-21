@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useMemo } from "react";
+import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -8,6 +8,7 @@ import {
   CircleMarker,
   Popup,
   useMap,
+  useMapEvents,
 } from "react-leaflet";
 import L from "leaflet";
 import type { VesselData } from "../lib/yachts-database";
@@ -18,26 +19,35 @@ import {
   isTenderVessel,
 } from "../lib/yachts-database";
 
-// Leica-style label: all caps, letter-spaced, rotated to heading
+// Brightness by vessel length — bigger = brighter/whiter
+function getLabelColor(length: number, isSelected: boolean): string {
+  if (isSelected) return "#fbbf24";
+  if (length >= 100) return "#ffffff";
+  if (length >= 80) return "rgba(248,250,252,0.95)";
+  if (length >= 60) return "rgba(226,232,240,0.85)";
+  if (length >= 45) return "rgba(203,213,225,0.75)";
+  return "rgba(148,163,184,0.65)";
+}
+
+// Dot color by length (same gradient but for circle fills)
+function getDotColor(length: number): string {
+  if (length >= 100) return "#f8fafc";
+  if (length >= 80) return "#cbd5e1";
+  if (length >= 60) return "#94a3b8";
+  if (length >= 45) return "#64748b";
+  return "#475569";
+}
+
 function makeLeicaIcon(
   name: string,
   heading: number,
   length: number,
-  speed?: number,
-  isSelected?: boolean,
-  hasOwner?: boolean
+  isSelected: boolean,
+  scale: number
 ): L.DivIcon {
-  // Font size scales with vessel length
-  const fontSize = length >= 100 ? 13 : length >= 70 ? 12 : length >= 50 ? 11 : 10;
-  const color = isSelected
-    ? "#fbbf24"
-    : hasOwner
-      ? "#f8fafc"
-      : "rgba(226,232,240,0.7)";
-  const statusColor = getStatusColor(speed);
-  // Rotation: 0° = north (up), CSS rotates clockwise from right
-  // heading 0 → text horizontal pointing right = rotate(-90deg) then add heading
+  const color = getLabelColor(length, isSelected);
   const rotation = (heading || 0) - 90;
+  const fontSize = Math.round(11 * scale);
 
   const html = `<div style="
     position:absolute;
@@ -53,7 +63,6 @@ function makeLeicaIcon(
     pointer-events:auto;
     cursor:pointer;
     line-height:1;
-    padding:2px 0;
   ">${name}</div>`;
 
   return L.divIcon({
@@ -77,6 +86,18 @@ function FlyToVessel({ vessel }: { vessel: VesselData | null }) {
       }
     }
   }, [vessel, map]);
+
+  return null;
+}
+
+function ZoomTracker({ onZoom }: { onZoom: (z: number) => void }) {
+  const map = useMapEvents({
+    zoomend: () => onZoom(map.getZoom()),
+  });
+
+  useEffect(() => {
+    onZoom(map.getZoom());
+  }, [map, onZoom]);
 
   return null;
 }
@@ -243,6 +264,14 @@ interface Props {
 }
 
 export function FullMapLeaflet({ vessels, selected, onSelect }: Props) {
+  const [zoom, setZoom] = useState(14);
+  const handleZoom = useCallback((z: number) => setZoom(z), []);
+
+  // Show text labels when zoomed in enough, dots when zoomed out
+  const showLabels = zoom >= 14;
+  // Scale text slightly with zoom: 1.0 at z14, larger when zoomed in
+  const textScale = Math.max(0.8, Math.min(1.4, 0.5 + zoom * 0.036));
+
   const large = useMemo(
     () => vessels.filter((v) => v.length >= 30 && !isTenderVessel(v)),
     [vessels]
@@ -265,8 +294,9 @@ export function FullMapLeaflet({ vessels, selected, onSelect }: Props) {
         url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
       />
       <FlyToVessel vessel={selected} />
+      <ZoomTracker onZoom={handleZoom} />
 
-      {/* Small vessels: dots */}
+      {/* Small vessels: always dots */}
       {small.map((v) => (
         <CircleMarker
           key={v.mtShipId}
@@ -286,28 +316,52 @@ export function FullMapLeaflet({ vessels, selected, onSelect }: Props) {
         </CircleMarker>
       ))}
 
-      {/* Large vessels: Leica-style text labels */}
+      {/* Large vessels: text labels when zoomed in, dots when zoomed out */}
       {large.map((v) => {
         const isSelected = selected?.mtShipId === v.mtShipId;
-        const icon = makeLeicaIcon(
-          v.name,
-          v.heading || 0,
-          v.length,
-          v.speed,
-          isSelected,
-          isKnownVessel(v)
-        );
+
+        if (showLabels) {
+          const icon = makeLeicaIcon(
+            v.name,
+            v.heading || 0,
+            v.length,
+            isSelected,
+            textScale
+          );
+          return (
+            <Marker
+              key={v.mtShipId}
+              position={[v.lat!, v.lon!]}
+              icon={icon}
+              eventHandlers={{ click: () => onSelect(v) }}
+            >
+              <Popup>
+                <VesselPopup v={v} />
+              </Popup>
+            </Marker>
+          );
+        }
+
+        // Zoomed out: sized/colored dot by vessel length
+        const dotColor = isSelected ? "#fbbf24" : getDotColor(v.length);
+        const radius = v.length >= 80 ? 5 : v.length >= 50 ? 4 : 3;
         return (
-          <Marker
+          <CircleMarker
             key={v.mtShipId}
-            position={[v.lat!, v.lon!]}
-            icon={icon}
+            center={[v.lat!, v.lon!]}
+            radius={radius}
+            pathOptions={{
+              color: isSelected ? "#fbbf24" : "rgba(255,255,255,0.3)",
+              fillColor: dotColor,
+              fillOpacity: isSelected ? 1 : 0.7,
+              weight: isSelected ? 2 : 1,
+            }}
             eventHandlers={{ click: () => onSelect(v) }}
           >
             <Popup>
               <VesselPopup v={v} />
             </Popup>
-          </Marker>
+          </CircleMarker>
         );
       })}
     </MapContainer>
