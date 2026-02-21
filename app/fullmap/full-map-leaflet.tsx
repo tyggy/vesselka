@@ -267,9 +267,9 @@ export function FullMapLeaflet({ vessels, selected, onSelect }: Props) {
   const [zoom, setZoom] = useState(14);
   const handleZoom = useCallback((z: number) => setZoom(z), []);
 
-  // Show text labels when zoomed in enough, dots when zoomed out
-  const showLabels = zoom >= 14;
-  // Scale text slightly with zoom: 1.0 at z14, larger when zoomed in
+  // z14+: labels for 30m+, z16+: labels for everything
+  const showLargeLabels = zoom >= 14;
+  const showSmallLabels = zoom >= 16;
   const textScale = Math.max(0.8, Math.min(1.4, 0.5 + zoom * 0.036));
 
   const large = useMemo(
@@ -296,31 +296,57 @@ export function FullMapLeaflet({ vessels, selected, onSelect }: Props) {
       <FlyToVessel vessel={selected} />
       <ZoomTracker onZoom={handleZoom} />
 
-      {/* Small vessels: always dots */}
-      {small.map((v) => (
-        <CircleMarker
-          key={v.mtShipId}
-          center={[v.lat!, v.lon!]}
-          radius={3}
-          pathOptions={{
-            color: "rgba(148,163,184,0.4)",
-            fillColor: "rgba(148,163,184,0.3)",
-            fillOpacity: 0.5,
-            weight: 1,
-          }}
-          eventHandlers={{ click: () => onSelect(v) }}
-        >
-          <Popup>
-            <VesselPopup v={v} />
-          </Popup>
-        </CircleMarker>
-      ))}
+      {/* Small vessels: labels at high zoom, dots otherwise */}
+      {small.map((v) => {
+        const isSelected = selected?.mtShipId === v.mtShipId;
+
+        if (showSmallLabels) {
+          const icon = makeLeicaIcon(
+            v.name,
+            v.heading || 0,
+            v.length || 15,
+            isSelected,
+            textScale * 0.85
+          );
+          return (
+            <Marker
+              key={v.mtShipId}
+              position={[v.lat!, v.lon!]}
+              icon={icon}
+              eventHandlers={{ click: () => onSelect(v) }}
+            >
+              <Popup>
+                <VesselPopup v={v} />
+              </Popup>
+            </Marker>
+          );
+        }
+
+        return (
+          <CircleMarker
+            key={v.mtShipId}
+            center={[v.lat!, v.lon!]}
+            radius={3}
+            pathOptions={{
+              color: "rgba(148,163,184,0.4)",
+              fillColor: isSelected ? "#fbbf24" : "rgba(148,163,184,0.3)",
+              fillOpacity: isSelected ? 1 : 0.5,
+              weight: 1,
+            }}
+            eventHandlers={{ click: () => onSelect(v) }}
+          >
+            <Popup>
+              <VesselPopup v={v} />
+            </Popup>
+          </CircleMarker>
+        );
+      })}
 
       {/* Large vessels: text labels when zoomed in, dots when zoomed out */}
       {large.map((v) => {
         const isSelected = selected?.mtShipId === v.mtShipId;
 
-        if (showLabels) {
+        if (showLargeLabels) {
           const icon = makeLeicaIcon(
             v.name,
             v.heading || 0,
