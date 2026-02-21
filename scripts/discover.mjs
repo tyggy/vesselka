@@ -680,8 +680,7 @@ async function main() {
         if (mt.flag) vessels[idx].flag = mt.flag;
         if (mt.grossTonnage) vessels[idx].grossTonnage = mt.grossTonnage;
         if (mt.photoUrl && !vessels[idx].photoUrl) {
-          // Use proxy URL to avoid MT hotlinking 403
-          vessels[idx].photoUrl = `https://vesselka.vercel.app/api/photo?id=${v.mtShipId}`;
+          vessels[idx].photoUrl = `https://photos.marinetraffic.com/ais/showphoto.aspx?shipid=${v.mtShipId}`;
         }
 
         const found = Object.entries(mt)

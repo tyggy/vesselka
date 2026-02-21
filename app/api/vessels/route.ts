@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
   if (missing && missing.length > 0) {
     const photoRows = missing.map((v) => ({
       mt_ship_id: v.mt_ship_id,
-      photo_url: `https://vesselka.vercel.app/api/photo?id=${v.mt_ship_id}`,
+      photo_url: `https://photos.marinetraffic.com/ais/showphoto.aspx?shipid=${v.mt_ship_id}`,
     }));
     await supabaseAdmin
       .from("vessels")
