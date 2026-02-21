@@ -58,7 +58,7 @@ function makeLeicaIcon(
     letter-spacing:0.18em;
     text-transform:uppercase;
     color:${color};
-    text-shadow:0 0 8px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.9);
+    text-shadow:0 0 4px rgba(0,0,0,0.6);
     transform:translate(-50%,-50%) rotate(${rotation}deg);
     pointer-events:auto;
     cursor:pointer;
