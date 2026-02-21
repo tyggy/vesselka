@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "db error" }, { status: 500, headers });
   }
 
-  // Set photo_url for vessels missing one (proxied through our API to avoid MT 403)
+  // Find vessels in this batch that need photos
   const shipIds = rows.map((r) => r.mt_ship_id);
   const { data: missing } = await supabaseAdmin
     .from("vessels")
@@ -90,15 +90,7 @@ export async function POST(req: NextRequest) {
     .in("mt_ship_id", shipIds)
     .or("photo_url.is.null,photo_url.eq.");
 
-  if (missing && missing.length > 0) {
-    const photoRows = missing.map((v) => ({
-      mt_ship_id: v.mt_ship_id,
-      photo_url: `https://photos.marinetraffic.com/ais/showphoto.aspx?shipid=${v.mt_ship_id}`,
-    }));
-    await supabaseAdmin
-      .from("vessels")
-      .upsert(photoRows, { onConflict: "mt_ship_id", ignoreDuplicates: false });
-  }
+  const needPhoto = (missing || []).map((v) => v.mt_ship_id);
 
-  return NextResponse.json({ ok: true, count: rows.length }, { headers });
+  return NextResponse.json({ ok: true, count: rows.length, needPhoto }, { headers });
 }

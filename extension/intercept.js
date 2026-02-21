@@ -144,6 +144,42 @@
     return promise;
   };
 
+  // Fetch vessel photo using MT session cookies, return as base64
+  async function fetchVesselPhoto(mtShipId) {
+    try {
+      const url = `https://www.marinetraffic.com/getAssetDefaultPhoto/?photo_size=800&asset_id=${mtShipId}&asset_type_id=0`;
+      const res = await origFetch(url, { credentials: "include" });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      if (!blob.type.startsWith("image/") || blob.size < 1000) return null;
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  // Listen for photo fetch requests from content script
+  window.addEventListener("message", async (event) => {
+    if (event.source !== window) return;
+    if (event.data?.type === "VESSELKA_FETCH_PHOTOS") {
+      const shipIds = event.data.shipIds || [];
+      const results = {};
+      for (const id of shipIds) {
+        const dataUrl = await fetchVesselPhoto(id);
+        if (dataUrl) results[id] = dataUrl;
+        // Small delay to avoid hammering MT
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      window.postMessage({ type: "VESSELKA_PHOTOS_RESULT", photos: results }, "*");
+      return;
+    }
+  });
+
   // Listen for nudge requests from content script (CSP-safe)
   window.addEventListener("message", (event) => {
     if (event.source !== window) return;

@@ -40,6 +40,12 @@
         lastSyncStatus = "ok";
         const data = await res.json();
         updateSyncIndicator("ok", `Synced ${data.count} vessels`);
+        // Fetch photos for vessels that need them
+        const needPhoto = (data.needPhoto || []).slice(0, 20);
+        if (needPhoto.length > 0) {
+          updateSyncIndicator("ok", `Fetching ${needPhoto.length} photos...`);
+          window.postMessage({ type: "VESSELKA_FETCH_PHOTOS", shipIds: needPhoto }, "*");
+        }
       } else {
         lastSyncStatus = "error";
         updateSyncIndicator("error", `Sync failed: ${res.status}`);
@@ -58,9 +64,29 @@
     indicator.className = "vesselka-sync vesselka-sync-" + status;
   }
 
-  // Listen for intercepted data from page context
-  window.addEventListener("message", (event) => {
+  // Listen for messages from page context
+  window.addEventListener("message", async (event) => {
     if (event.source !== window) return;
+
+    // Photo results — upload to API
+    if (event.data?.type === "VESSELKA_PHOTOS_RESULT") {
+      const photos = event.data.photos || {};
+      const entries = Object.entries(photos);
+      if (entries.length === 0) return;
+      try {
+        const res = await fetch(API_URL + "/photos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
+          body: JSON.stringify({ photos }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          updateSyncIndicator("ok", `Uploaded ${data.count} photos`);
+        }
+      } catch {}
+      return;
+    }
+
     if (event.data?.type !== "VESSELKA_VESSELS") return;
 
     for (const v of event.data.vessels) {

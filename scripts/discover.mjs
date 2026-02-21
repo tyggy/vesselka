@@ -679,9 +679,7 @@ async function main() {
         if (mt.type) vessels[idx].type = mt.type;
         if (mt.flag) vessels[idx].flag = mt.flag;
         if (mt.grossTonnage) vessels[idx].grossTonnage = mt.grossTonnage;
-        if (mt.photoUrl && !vessels[idx].photoUrl) {
-          vessels[idx].photoUrl = `https://photos.marinetraffic.com/ais/showphoto.aspx?shipid=${v.mtShipId}`;
-        }
+        if (mt.photoUrl && !vessels[idx].photoUrl) vessels[idx].photoUrl = mt.photoUrl;
 
         const found = Object.entries(mt)
           .filter(([, val]) => val)
