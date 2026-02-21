@@ -144,5 +144,20 @@
     return promise;
   };
 
+  // Listen for nudge requests from content script (CSP-safe)
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    if (event.data?.type !== "VESSELKA_NUDGE_MAP") return;
+    var containers = document.querySelectorAll(".leaflet-container");
+    for (var c of containers) {
+      if (c._leaflet_map) {
+        c._leaflet_map.panBy([1, 0]);
+        setTimeout(function () { c._leaflet_map.panBy([-1, 0]); }, 200);
+        return;
+      }
+    }
+    window.dispatchEvent(new Event("resize"));
+  });
+
   console.log("[Vesselka] Intercept active — monitoring MarineTraffic API");
 })();

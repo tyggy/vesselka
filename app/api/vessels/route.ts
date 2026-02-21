@@ -1,114 +1,104 @@
-import { NextResponse } from "next/server";
-import { GUSTAVIA_YACHTS, type YachtData } from "../../lib/yachts-database";
+import { NextRequest, NextResponse } from "next/server";
+import { supabaseAdmin } from "../../lib/supabase";
 
-const MT_HEADERS = {
-  "sec-ch-ua":
-    '"Not_A Brand";v="99", "Google Chrome";v="131", "Chromium";v="131"',
-  Accept: "*/*",
-  "X-Requested-With": "XMLHttpRequest",
-  "sec-ch-ua-mobile": "?0",
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-  "sec-ch-ua-platform": '"Windows"',
-  host: "www.marinetraffic.com",
-};
+const ALLOWED_ORIGINS = [
+  "https://www.marinetraffic.com",
+  "http://www.marinetraffic.com",
+];
 
-const VF_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-  Accept:
-    "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-  "Accept-Language": "en-US,en;q=0.5",
-};
-
-async function fetchFromMarineTraffic(
-  shipId: string
-): Promise<{ lat: number; lon: number; speed: number; status: string } | null> {
-  try {
-    const url = `https://www.marinetraffic.com/vesselDetails/latestPosition/shipid:${shipId}`;
-    const res = await fetch(url, {
-      headers: MT_HEADERS,
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.lat && data.lon) {
-      return {
-        lat: parseFloat(data.lat),
-        lon: parseFloat(data.lon),
-        speed: parseFloat(data.speed || "0"),
-        status: data.status || "unknown",
-      };
-    }
-    return null;
-  } catch {
-    return null;
-  }
+function corsHeaders(origin?: string | null) {
+  const allowed = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allowed,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, x-api-key",
+  };
 }
 
-async function fetchFromVesselFinder(
-  yacht: YachtData
-): Promise<{ lat: number; lon: number } | null> {
-  try {
-    const url = `https://www.vesselfinder.com/vessels/details/${yacht.imo}`;
-    const res = await fetch(url, {
-      headers: VF_HEADERS,
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    const html = await res.text();
-    const coordMatch = html.match(
-      /coordinates['":\s]+([0-9.-]+)\s*[,/]\s*([0-9.-]+)/i
-    );
-    if (coordMatch) {
-      return { lat: parseFloat(coordMatch[1]), lon: parseFloat(coordMatch[2]) };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-export async function GET() {
-  const results: YachtData[] = await Promise.all(
-    GUSTAVIA_YACHTS.map(async (yacht) => {
-      // Try MarineTraffic first, then VesselFinder
-      const mtData = await fetchFromMarineTraffic(yacht.mtShipId);
-      if (mtData) {
-        return {
-          ...yacht,
-          lat: mtData.lat,
-          lon: mtData.lon,
-          speed: mtData.speed,
-          status: mtData.status,
-          lastUpdate: new Date().toISOString(),
-        };
-      }
-
-      const vfData = await fetchFromVesselFinder(yacht);
-      if (vfData) {
-        return {
-          ...yacht,
-          lat: vfData.lat,
-          lon: vfData.lon,
-          lastUpdate: new Date().toISOString(),
-        };
-      }
-
-      // Return yacht without live position data
-      return { ...yacht };
-    })
-  );
-
-  return NextResponse.json({
-    yachts: results,
-    harbor: {
-      name: "Gustavia Harbor",
-      location: "St. Barthélemy",
-      lat: 17.8964,
-      lon: -62.8494,
-    },
-    fetchedAt: new Date().toISOString(),
-    sources: ["MarineTraffic", "VesselFinder"],
+export async function OPTIONS(req: NextRequest) {
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeaders(req.headers.get("origin")),
   });
+}
+
+export async function POST(req: NextRequest) {
+  const origin = req.headers.get("origin");
+  const headers = corsHeaders(origin);
+
+  // Auth
+  const apiKey = req.headers.get("x-api-key");
+  if (!apiKey || apiKey !== process.env.VESSELKA_API_KEY) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401, headers });
+  }
+
+  if (!supabaseAdmin) {
+    return NextResponse.json({ error: "server misconfigured" }, { status: 500, headers });
+  }
+
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "invalid json" }, { status: 400, headers });
+  }
+
+  const vessels: any[] = Array.isArray(body) ? body : body.vessels;
+  if (!vessels?.length) {
+    return NextResponse.json({ error: "no vessels" }, { status: 400, headers });
+  }
+
+  // Extension upsert — only update position fields to avoid overwriting enriched data
+  const rows = vessels
+    .filter((v: any) => v.mtShipId || v.mt_ship_id)
+    .map((v: any) => ({
+      mt_ship_id: v.mtShipId || v.mt_ship_id,
+      name: v.name || "Unknown",
+      imo: v.imo || "",
+      mmsi: v.mmsi || "",
+      length: v.length === 511 ? 0 : v.length || 0,
+      type: v.type || "motor",
+      lat: v.lat ?? null,
+      lon: v.lon ?? null,
+      speed: v.speed ?? null,
+      heading: v.heading ?? null,
+      status: v.status || null,
+      last_seen: new Date().toISOString(),
+      source: "extension",
+      updated_at: new Date().toISOString(),
+    }));
+
+  if (rows.length === 0) {
+    return NextResponse.json({ error: "no valid vessels" }, { status: 400, headers });
+  }
+
+  const { error } = await supabaseAdmin.from("vessels").upsert(rows, {
+    onConflict: "mt_ship_id",
+    ignoreDuplicates: false,
+  });
+
+  if (error) {
+    console.error("Supabase upsert error:", error);
+    return NextResponse.json({ error: "db error" }, { status: 500, headers });
+  }
+
+  // Set photo_url for vessels missing one (proxied through our API to avoid MT 403)
+  const shipIds = rows.map((r) => r.mt_ship_id);
+  const { data: missing } = await supabaseAdmin
+    .from("vessels")
+    .select("mt_ship_id")
+    .in("mt_ship_id", shipIds)
+    .or("photo_url.is.null,photo_url.eq.");
+
+  if (missing && missing.length > 0) {
+    const photoRows = missing.map((v) => ({
+      mt_ship_id: v.mt_ship_id,
+      photo_url: `https://vesselka.vercel.app/api/photo?id=${v.mt_ship_id}`,
+    }));
+    await supabaseAdmin
+      .from("vessels")
+      .upsert(photoRows, { onConflict: "mt_ship_id", ignoreDuplicates: false });
+  }
+
+  return NextResponse.json({ ok: true, count: rows.length }, { headers });
 }

@@ -5,7 +5,8 @@
  * Enriches captured vessel data with details from MarineTraffic + Wikipedia.
  *
  * Usage:
- *   node scripts/discover.mjs                   # Enrich vessels missing data
+ *   node scripts/discover.mjs                   # Enrich vessels missing data (from JSON)
+ *   node scripts/discover.mjs --supabase        # Enrich unenriched vessels from Supabase
  *   node scripts/discover.mjs --limit 10        # Process max 10 vessels
  *   node scripts/discover.mjs --min-length 30   # Only vessels >= 30m
  *   node scripts/discover.mjs --all             # Re-fetch all vessels
@@ -22,16 +23,64 @@
 import { readFileSync, writeFileSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { createClient } from "@supabase/supabase-js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "..");
 const CAPTURED_PATH = resolve(PROJECT_ROOT, "app/lib/captured-vessels.json");
 
+// Load .env for Supabase credentials
+let supabase = null;
+try {
+  const envContent = readFileSync(resolve(PROJECT_ROOT, ".env"), "utf8");
+  const env = {};
+  for (const line of envContent.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx !== -1) env[trimmed.slice(0, eqIdx)] = trimmed.slice(eqIdx + 1);
+  }
+  if (env.NEXT_PUBLIC_SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+    supabase = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+  }
+} catch {}
+
+async function upsertToSupabase(vessel) {
+  if (!supabase) return;
+  const row = {
+    mt_ship_id: vessel.mtShipId,
+    name: vessel.name || "Unknown",
+    imo: vessel.imo || "",
+    mmsi: vessel.mmsi || "",
+    length: vessel.length === 511 ? 0 : vessel.length || 0,
+    type: vessel.type || "motor",
+    builder: vessel.builder || "",
+    year_built: vessel.yearBuilt || 0,
+    photo_url: vessel.photoUrl || "",
+    wikipedia: vessel.wikipedia || null,
+    flag: vessel.flag || null,
+    ship_type: vessel.shipType || null,
+    call_sign: vessel.callSign || null,
+    beam: vessel.beam || null,
+    notable_info: vessel.notableInfo || null,
+    lat: vessel.lat ?? null,
+    lon: vessel.lon ?? null,
+    speed: vessel.speed ?? null,
+    heading: vessel.heading ?? null,
+    status: vessel.status || null,
+    source: "discover",
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from("vessels").upsert(row, { onConflict: "mt_ship_id" });
+  if (error) console.error(`  Supabase upsert error for ${vessel.name}:`, error.message);
+  else console.log(`  Supabase: upserted`);
+}
+
 const MT_DELAY = 3500;
 const WIKI_DELAY = 1000;
 
 function needsEnrichment(v) {
-  return !v.imo || !v.builder || v.yearBuilt === 0;
+  return !v.imo || !v.builder || v.yearBuilt === 0 || !v.photoUrl;
 }
 
 function needsOwnerEnrichment(v) {
@@ -493,6 +542,53 @@ Return ONLY valid JSON, no explanation. Omit fields you're not confident about.`
 
 // --- Main ---
 
+async function fetchUnenrichedFromSupabase(minLength) {
+  if (!supabase) {
+    console.error("Supabase not configured — set env vars in .env");
+    process.exit(1);
+  }
+  console.log("Fetching unenriched vessels from Supabase...");
+  let query = supabase
+    .from("vessels")
+    .select("*")
+    .or("builder.is.null,builder.eq.,imo.is.null,imo.eq.,year_built.is.null,year_built.eq.0,photo_url.is.null,photo_url.eq.")
+    .order("length", { ascending: false });
+
+  if (minLength > 0) {
+    query = query.gte("length", minLength);
+  }
+
+  const { data, error } = await query.limit(500);
+  if (error) {
+    console.error("Supabase query error:", error.message);
+    process.exit(1);
+  }
+
+  // Convert snake_case DB rows to camelCase app format
+  return (data || []).map((r) => ({
+    mtShipId: r.mt_ship_id,
+    name: r.name || "Unknown",
+    imo: r.imo || "",
+    mmsi: r.mmsi || "",
+    length: r.length || 0,
+    type: r.type || "motor",
+    builder: r.builder || "",
+    yearBuilt: r.year_built || 0,
+    photoUrl: r.photo_url || "",
+    wikipedia: r.wikipedia || null,
+    flag: r.flag || null,
+    shipType: r.ship_type || null,
+    callSign: r.call_sign || null,
+    beam: r.beam || null,
+    notableInfo: r.notable_info || null,
+    lat: r.lat,
+    lon: r.lon,
+    speed: r.speed,
+    heading: r.heading,
+    status: r.status,
+  }));
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const limit = args.includes("--limit")
@@ -505,9 +601,16 @@ async function main() {
   const dryRun = args.includes("--dry-run");
   const enrichOwners = args.includes("--enrich-owners");
   const useLLM = args.includes("--llm");
+  const fromSupabase = args.includes("--supabase");
 
-  const vessels = JSON.parse(readFileSync(CAPTURED_PATH, "utf8"));
-  console.log(`Loaded ${vessels.length} vessels from captured data`);
+  let vessels;
+  if (fromSupabase) {
+    vessels = await fetchUnenrichedFromSupabase(minLength);
+    console.log(`Found ${vessels.length} unenriched vessels in Supabase`);
+  } else {
+    vessels = JSON.parse(readFileSync(CAPTURED_PATH, "utf8"));
+    console.log(`Loaded ${vessels.length} vessels from captured data`);
+  }
 
   if (useLLM && !process.env.ANTHROPIC_API_KEY) {
     console.log("Warning: --llm requires ANTHROPIC_API_KEY env var\n");
@@ -576,7 +679,10 @@ async function main() {
         if (mt.type) vessels[idx].type = mt.type;
         if (mt.flag) vessels[idx].flag = mt.flag;
         if (mt.grossTonnage) vessels[idx].grossTonnage = mt.grossTonnage;
-        if (mt.photoUrl && !vessels[idx].photoUrl) vessels[idx].photoUrl = mt.photoUrl;
+        if (mt.photoUrl && !vessels[idx].photoUrl) {
+          // Use proxy URL to avoid MT hotlinking 403
+          vessels[idx].photoUrl = `https://vesselka.vercel.app/api/photo?id=${v.mtShipId}`;
+        }
 
         const found = Object.entries(mt)
           .filter(([, val]) => val)
@@ -716,10 +822,13 @@ async function main() {
       }
     }
 
+    // Push enriched data to Supabase
+    if (!dryRun) await upsertToSupabase(vessels[idx]);
+
     console.log("");
 
-    // Save progress every 5 vessels
-    if (!dryRun && (i + 1) % 5 === 0) {
+    // Save progress every 5 vessels (skip for supabase mode — data goes to DB)
+    if (!dryRun && !fromSupabase && (i + 1) % 5 === 0) {
       writeFileSync(CAPTURED_PATH, JSON.stringify(vessels, null, 2));
       console.log(`  [saved progress]\n`);
     }
@@ -735,9 +844,11 @@ async function main() {
   console.log(`  Owners: ${ownersFound} enriched`);
   if (useLLM) console.log(`  LLM: ${llmEnriched} enriched`);
 
-  if (!dryRun) {
+  if (!dryRun && !fromSupabase) {
     writeFileSync(CAPTURED_PATH, JSON.stringify(vessels, null, 2));
     console.log(`  Saved: ${CAPTURED_PATH}`);
+  } else if (fromSupabase) {
+    console.log(`  Data upserted to Supabase (no local save)`);
   } else {
     console.log(`  Dry run — not saved`);
   }

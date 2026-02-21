@@ -3,6 +3,12 @@
 (function () {
   "use strict";
 
+  // --- Config ---
+  const API_URL = "https://vesselka.vercel.app/api/vessels";
+  const API_KEY = "6c7d4d20efd4d64c1df2775da05adabf";
+  const SYNC_DEBOUNCE_MS = 5000;
+  const AUTO_SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+
   // Inject the interceptor into the page's JS context
   const script = document.createElement("script");
   script.src = chrome.runtime.getURL("intercept.js");
@@ -11,6 +17,46 @@
 
   // Vessel store — keyed by MMSI or mtShipId to dedupe
   const vessels = new Map();
+
+  // --- Auto-sync to Vesselka API ---
+  let syncTimer = null;
+  let lastSyncStatus = null; // "ok" | "error" | null
+
+  function scheduleSyncToAPI() {
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncToAPI, SYNC_DEBOUNCE_MS);
+  }
+
+  async function syncToAPI() {
+    const arr = Array.from(vessels.values()).filter((v) => v.mtShipId && v.lat);
+    if (arr.length === 0) return;
+    try {
+      const res = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
+        body: JSON.stringify(arr),
+      });
+      if (res.ok) {
+        lastSyncStatus = "ok";
+        const data = await res.json();
+        updateSyncIndicator("ok", `Synced ${data.count} vessels`);
+      } else {
+        lastSyncStatus = "error";
+        updateSyncIndicator("error", `Sync failed: ${res.status}`);
+      }
+    } catch (e) {
+      lastSyncStatus = "error";
+      updateSyncIndicator("error", "Sync failed: network error");
+    }
+  }
+
+  function updateSyncIndicator(status, text) {
+    if (!panel) return;
+    const indicator = panel.querySelector(".vesselka-sync");
+    if (!indicator) return;
+    indicator.textContent = text;
+    indicator.className = "vesselka-sync vesselka-sync-" + status;
+  }
 
   // Listen for intercepted data from page context
   window.addEventListener("message", (event) => {
@@ -30,6 +76,7 @@
     }
 
     renderPanel();
+    scheduleSyncToAPI();
   });
 
   // --- Panel UI ---
@@ -56,7 +103,10 @@
           </label>
         </div>
         <div class="vesselka-list"></div>
+        <div class="vesselka-sync"></div>
         <div class="vesselka-footer">
+          <button class="vesselka-btn vesselka-btn-refresh" title="Nudge map to trigger MT data reload">Refresh</button>
+          <button class="vesselka-btn vesselka-btn-sync" title="Push to Vesselka now">Sync</button>
           <button class="vesselka-btn vesselka-btn-copy">Copy JSON</button>
           <button class="vesselka-btn vesselka-btn-download">Download JSON</button>
           <button class="vesselka-btn vesselka-btn-clear">Clear</button>
@@ -125,9 +175,31 @@
       renderPanel();
     });
 
+    // Refresh — nudge the map to trigger MT API reload
+    panel.querySelector(".vesselka-btn-refresh").addEventListener("click", () => {
+      nudgeMap();
+      showToast("Refreshing map data...");
+    });
+
+    // Manual sync
+    panel.querySelector(".vesselka-btn-sync").addEventListener("click", () => {
+      syncToAPI();
+      showToast("Syncing to Vesselka...");
+    });
+
     // Search filter
     panel.querySelector(".vesselka-search").addEventListener("input", () => renderList());
     panel.querySelector(".vesselka-min-length").addEventListener("input", () => renderList());
+
+    // Auto-sync every 30 min: nudge map for fresh positions, then sync
+    setInterval(() => {
+      nudgeMap();
+      setTimeout(() => syncToAPI(), 3000);
+    }, AUTO_SYNC_INTERVAL_MS);
+  }
+
+  function nudgeMap() {
+    window.postMessage({ type: "VESSELKA_NUDGE_MAP" }, "*");
   }
 
   function getFilteredVessels() {
